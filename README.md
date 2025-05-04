@@ -1,78 +1,175 @@
-# Google Keep - Full Screen - Browser Extension
+# Overview
 
-[![Google Keep Full Screen Demo Screen Recording](https://raw.githubusercontent.com/chrisputnam9/chrome-google-keep-full-screen/master/publish/images/demo_thumbnail_with_button.png)](https://www.youtube.com/watch?v=xyapRE7d3lw)
+This repo is forked from [chrisputnam9/chrome-google-keep-full-screen](https://github.com/chrisputnam9/chrome-google-keep-full-screen). This document details the modifications made to the Google Keep Full Screen extension to make it compatible with Electron. Since this is now a fork of the original extension hosted at [samlam369/chrome-google-keep-full-screen](https://github.com/samlam369/chrome-google-keep-full-screen), this information will help future maintainers understand the changes and maintain them when merging upstream updates.
 
-## Latest Version: 1.4.1
+## Why Modifications Are Needed
 
-- Allows Google Keep editing to use the full browser window.
-- Allows toggling full screen on and off by clicking on an icon added on the notes.
-- Remembers full screen status across sessions
-- Supports Dark Mode
-- Works with non-English language settings
-- Options page to customize behavior (width, padding, background)
-- Customizable keyboard shortcut (Ctrl+Shift+F or Cmd+Shift+F by default) to toggle full screen on and off
-- 🆕 Options allow fading out extra note items (menu, labels, etc) for even more distraction-free work and focus on the note content
-- 🆕 Options allow customizing horizontal and vertical padding separately
-- 🆕 Improved padding styling that works with labels, previews, etc.
-- 🆕 Icons to help identify options
+Electron provides Chrome extension API compatibility, but there are some differences in how these APIs behave compared to a regular Chrome browser:
 
-## Warnings & Important Notes
+1. **Availability of Chrome APIs**: Some Chrome APIs may not be fully available or might behave differently in Electron.
+2. **Error Handling**: The extension needs robust error handling to gracefully handle cases where Chrome APIs are absent or fail.
+3. **DOM Element Availability**: The extension needs to check for element existence before attaching observers or event listeners.
 
-1.  **Use this extension at your own risk.** It shouldn't cause problems, but I can't make any guarantees. It's wise to keep critical notes [backed up](https://support.google.com/keep/answer/10017039?hl=en).
-2.  **This extension only works with the website version** of Google Keep (ie. https://keep.google.com) - it won't work with the "app" version (the one you might install and launch from your app menu -ie. for offline use).
-3.  At this time, clicking the extension icon itself does not toggle anything - click the full-screen icon added to the note itself (or use the keyboard shortcut) to toggle full-screen on and off.
+## Key Modifications
 
-## Help
+### 1. Main Initialization Function
 
-### Installation
+The `init()` function has been wrapped in a try/catch block to prevent initialization failures from crashing the entire extension:
 
-The simplest method is to install from the extension or add-on page for your browser:
+```javascript
+init: async function () {
+    try {
+        // Original initialization code
+        ...
+    } catch (err) {
+        console.error('Extension initialization error:', err);
+    }
+},
+```
 
-- [Install in Chrome](https://chrome.google.com/webstore/detail/kcfmkpjpemonceecfpgamaahlkfpjhdk)
-- [Install in Edge](https://microsoftedge.microsoft.com/addons/detail/google-keep-full-screen/mfbggeknlmaadiommcbkidgofgkmdakf)
-- [Install in Firefox](https://addons.mozilla.org/en-US/firefox/addon/google-keep-full-screen-edit/)
+### 2. Chrome Storage API Handling
 
-#### Manual Installation for Development (Sideloading)
+The Chrome storage API calls are wrapped in try/catch blocks with fallbacks:
 
-This is useful if you want to change the extension or use it as an example to create your own.
+```javascript
+// Original code
+const storage = await promise_chrome_storage_sync_get(["settings"]);
 
-- [Sideload in Chrome](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked)
-- [Sideload in Firefox](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Your_first_WebExtension#installing)
-- [Sideload in Edge](https://docs.microsoft.com/en-us/microsoft-edge/extensions-chromium/getting-started/extension-sideloading)
+// Modified code
+try {
+    const storage = await promise_chrome_storage_sync_get(["settings"]);
+    if ("settings" in storage && "fullscreen" in storage.settings) {
+        this.fullscreen = storage.settings.fullscreen;
+    }
+} catch (storageErr) {
+    // Chrome storage may not be available in Electron
+    console.log('Chrome storage API error:', storageErr);
+    // Continue with default fullscreen setting
+}
+```
 
-### General Use
+### 3. Chrome Messaging API Handling
 
-- Full-screen is enabled by default when you first install the extension.
-- Use the full-screen icon at the bottom of the note to toggle full-screen on and off as needed.
-- Alternatively, use the keyboard shortcut, which you can customize at "chrome://extensions/shortcuts"
-- Your selection will be remembered between notes and sessions.
-- Open the extension options (from a note menu, Keep menu, extension icon menu or extension page) to customize behavior.
+Chrome messaging is wrapped in try/catch to handle potential unavailability:
 
-### Like the Extension?
+```javascript
+// Original code
+chrome.runtime.onMessage.addListener(function (request) {
+    // Handle keyboard shortcuts
+    ...
+});
 
-Please rate or review it to help others find it!
+// Modified code
+try {
+    chrome.runtime.onMessage.addListener(function (request) {
+        // Handle keyboard shortcuts
+        ...
+    });
+} catch (chromeErr) {
+    // Chrome messaging may not be available in Electron
+    console.log('Chrome messaging API error:', chromeErr);
+}
+```
 
-- [Reviews for Chrome](https://chromewebstore.google.com/detail/google-keep-full-screen-e/kcfmkpjpemonceecfpgamaahlkfpjhdk/reviews)
-- [Reviews for Edge](https://microsoftedge.microsoft.com/addons/detail/google-keep-full-screen/mfbggeknlmaadiommcbkidgofgkmdakf)
-- [Reviews for Firefox](https://addons.mozilla.org/en-US/firefox/addon/google-keep-full-screen-edit/)
+### 4. DOM Element Existence Checks
 
-### Issues & Contributions
+Added checks for element existence before attaching observers:
 
-Found a bug? Have a suggestion?
+```javascript
+// Original code
+main.observerNewNotes.observe(elCreatedNotesGroupContainer, {
+    childList: true,
+});
 
-[Submit it here](https://github.com/chrisputnam9/chrome-google-keep-full-screen/issues)
+// Modified code
+if (elCreatedNotesGroupContainer) {
+    main.observerNewNotes.observe(elCreatedNotesGroupContainer, {
+        childList: true,
+    });
+} else {
+    console.log('Note container not found, observer not attached');
+}
+```
 
-Thanks to all who have contributed reviews, suggestions, bug reports, etc. Special thanks to
-[@MartinLichtblau](https://github.com/MartinLichtblau),
-[@tbrodbeck](https://github.com/tbrodbeck),
-[@JnLlnd](https://github.com/JnLlnd),
-[@dylankenneally](https://github.com/dylankenneally),
-[@Paliec](https://github.com/Palivec),
-[@macdonaldster](https://github.com/macdonaldster),
-[@kellerbeing](https://github.com/kellerbeing),
-[@Palivec](https://github.com/Palivec)
+### 5. Promisified Chrome API Methods
 
-Developer sustenance funding ($ support) is welcome
+The `promise_chrome_storage_sync_set` and `promise_chrome_storage_sync_get` methods have been modified to handle errors gracefully:
 
-- [Ko-fi](https://ko-fi.com/chrisputnam9)
-- [Github Sponsor](https://github.com/sponsors/chrisputnam9)
+```javascript
+// Original
+function promise_chrome_storage_sync_get(data) {
+    return new Promise((resolve, reject) => {
+        try {
+            chrome.storage.sync.get(data, resolve);
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+// Modified
+function promise_chrome_storage_sync_get(data) {
+    return new Promise((resolve, reject) => {
+        try {
+            chrome.storage.sync.get(data, resolve);
+        } catch (error) {
+            console.log("chrome.storage.sync.get error:", error);
+            // Return empty object to prevent errors in Electron
+            resolve({});
+        }
+    });
+}
+```
+
+### 6. Options Menu Event Handler
+
+The options menu click handler is also wrapped in a try/catch:
+
+```javascript
+// Original
+elMenuItemOptions.addEventListener("click", function (event) {
+    event.preventDefault();
+    chrome.runtime.sendMessage({ action: "open-options" });
+});
+
+// Modified
+elMenuItemOptions.addEventListener("click", function (event) {
+    event.preventDefault();
+    try {
+        chrome.runtime.sendMessage({ action: "open-options" });
+    } catch (error) {
+        console.log("Chrome runtime sendMessage error:", error);
+    }
+});
+```
+
+## Maintenance Strategy
+
+As this is now a fork maintained at [samlam369/chrome-google-keep-full-screen](https://github.com/samlam369/chrome-google-keep-full-screen), changes from the upstream repository should be manually merged into this fork. When merging upstream changes:
+
+1. Pull the upstream changes into a separate branch
+2. Review the changes, particularly any modifications to `script.js`
+3. Manually merge the changes while preserving the error handling modifications
+4. Run the app to test that the extension still works correctly in Electron
+
+## Manifest Management
+
+The Electron app expects the extension's `manifest.json` to be present and properly configured in the root of this directory. For compatibility and to ensure the extension loads correctly:
+
+- The `manifest.json` is copied from `publish/manifest-chrome.json` (or created from the latest upstream manifest if needed).
+- The `run_at` property for the content script must be set to `"document_idle"`.
+- If you update the manifest or pull changes from upstream, always verify that `run_at` is still set correctly in `manifest.json`.
+- This ensures that the extension is injected at the appropriate time for Google Keep to function correctly in Electron.
+
+If you make changes to the manifest or update the extension, make sure to check this property before running or distributing the app.
+
+## Testing Changes
+
+After making any changes to the extension code, test the following functionality:
+
+1. Opening the app and ensuring the extension loads
+2. Creating and opening a note to verify the full-screen functionality works
+3. Toggling full-screen mode using the button in the note toolbar
+4. Testing any keyboard shortcuts defined by the extension
+
+By maintaining our own fork with these compatibility changes, we ensure the extension will continue to work reliably in our Electron application while still allowing us to incorporate improvements from the upstream repository.
