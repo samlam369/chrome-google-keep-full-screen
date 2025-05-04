@@ -1,4 +1,5 @@
 /* global chrome */
+// Patched for Electron compatibility
 const main = {
 	SELECTOR_CREATED_NOTES_GROUP_CONTAINER:
 		".gkA7Yd-sKfxWe.ma6Yeb-r8s4j-gkA7Yd>div",
@@ -21,68 +22,87 @@ const main = {
 	observerNoteChanges: null,
 
 	init: async function () {
-		main.SELECTOR_OPEN_NOTE_CONTAINER =
-			main.SELECTOR_NOTE_CONTAINER + ".IZ65Hb-QQhtn";
-		main.SELECTOR_OPEN_NOTE =
-			main.SELECTOR_OPEN_NOTE_CONTAINER + " .IZ65Hb-TBnied";
-		main.SELECTOR_OPEN_NOTE_TOOLBAR =
-			main.SELECTOR_OPEN_NOTE + " .IZ65Hb-yePe5c";
+		try {
+			main.SELECTOR_OPEN_NOTE_CONTAINER =
+				main.SELECTOR_NOTE_CONTAINER + ".IZ65Hb-QQhtn";
+			main.SELECTOR_OPEN_NOTE =
+				main.SELECTOR_OPEN_NOTE_CONTAINER + " .IZ65Hb-TBnied";
+			main.SELECTOR_OPEN_NOTE_TOOLBAR =
+				main.SELECTOR_OPEN_NOTE + " .IZ65Hb-yePe5c";
 
-		main.elBody = document.querySelector("body");
+			main.elBody = document.querySelector("body");
 
-		main.observerMenu = new MutationObserver(main.maybeInitMenu);
-		main.observerNoteChanges = new MutationObserver(main.checkForOpenNote);
-		main.observerNewNotes = new MutationObserver(main.initNoteObservers);
+			main.observerMenu = new MutationObserver(main.maybeInitMenu);
+			main.observerNoteChanges = new MutationObserver(main.checkForOpenNote);
+			main.observerNewNotes = new MutationObserver(main.initNoteObservers);
 
-		main.checkForDarkMode();
-		main.checkForOpenNote();
-		main.maybeInitMenu();
+			main.checkForDarkMode();
+			main.checkForOpenNote();
+			main.maybeInitMenu();
 
-		const storage = await promise_chrome_storage_sync_get(["settings"]);
-
-		if ("settings" in storage && "fullscreen" in storage.settings) {
-			this.fullscreen = storage.settings.fullscreen;
-		}
-
-		// Observe body for menus
-		main.initMenuObservers();
-
-		// Observe existing notes on load for open/close
-		main.initNoteObservers();
-
-		// Observe note group container for added/removed children
-		const elCreatedNotesGroupContainer = document.querySelector(
-			this.SELECTOR_CREATED_NOTES_GROUP_CONTAINER
-		);
-
-		// Listen for list of notes to change - add/remove or page switch
-		main.observerNewNotes.observe(elCreatedNotesGroupContainer, {
-			childList: true,
-		});
-
-		// Listen for popstate - triggered by forward and back buttons, and manual hash entry
-		window.addEventListener("popstate", main.checkForOpenNote);
-
-		// Listen for child change in head (eg. script swap for normal/dark mode)
-		// - check whether to toggle dark mode class, based on body style
-		const elHead = document.querySelector("head");
-		new MutationObserver(main.checkForDarkMode).observe(elHead, {
-			childList: true,
-		});
-
-		// Listen for messages
-		chrome.runtime.onMessage.addListener(function (request) {
-			// Handle keyboard shortcuts
-			if (
-				"command" in request &&
-				request.command === "toggle-fullscreen"
-			) {
-				main.set({ fullscreen: !main.fullscreen });
-				if (main.note) {
-					main.note.toggle_fullscreen();
+			try {
+				const storage = await promise_chrome_storage_sync_get(["settings"]);
+				
+				if ("settings" in storage && "fullscreen" in storage.settings) {
+					this.fullscreen = storage.settings.fullscreen;
 				}
+			} catch (storageErr) {
+				// Chrome storage may not be available in Electron
+				console.log('Chrome storage API error:', storageErr);
+				// Continue with default fullscreen setting
 			}
-		});
+
+			// Observe body for menus
+			main.initMenuObservers();
+
+			// Observe existing notes on load for open/close
+			main.initNoteObservers();
+
+			// Observe note group container for added/removed children
+			const elCreatedNotesGroupContainer = document.querySelector(
+				this.SELECTOR_CREATED_NOTES_GROUP_CONTAINER
+			);
+
+			// Listen for list of notes to change - add/remove or page switch
+			if (elCreatedNotesGroupContainer) {
+				main.observerNewNotes.observe(elCreatedNotesGroupContainer, {
+					childList: true,
+				});
+			} else {
+				console.log('Note container not found, observer not attached');
+			}
+
+			// Listen for popstate - triggered by forward and back buttons, and manual hash entry
+			window.addEventListener("popstate", main.checkForOpenNote);
+
+			// Listen for child change in head (eg. script swap for normal/dark mode)
+			// - check whether to toggle dark mode class, based on body style
+			const elHead = document.querySelector("head");
+			new MutationObserver(main.checkForDarkMode).observe(elHead, {
+				childList: true,
+			});
+
+			// Listen for messages
+			try {
+				chrome.runtime.onMessage.addListener(function (request) {
+					// Handle keyboard shortcuts
+					if (
+						"command" in request &&
+						request.command === "toggle-fullscreen"
+					) {
+						main.set({ fullscreen: !main.fullscreen });
+						if (main.note) {
+							main.note.toggle_fullscreen();
+						}
+					}
+				});
+			} catch (chromeErr) {
+				// Chrome messaging may not be available in Electron
+				console.log('Chrome messaging API error:', chromeErr);
+			}
+		} catch (err) {
+			console.error('Extension initialization error:', err);
+		}
 	},
 
 	/** Update one or more settings **/
@@ -201,7 +221,11 @@ const main = {
 			);
 			elMenuItemOptions.addEventListener("click", function (event) {
 				event.preventDefault();
-				chrome.runtime.sendMessage({ action: "open-options" });
+				try {
+					chrome.runtime.sendMessage({ action: "open-options" });
+				} catch (error) {
+					console.log("Chrome runtime sendMessage error:", error);
+				}
 			});
 
 			// Mark as initialized
@@ -299,12 +323,14 @@ const Note = function (el, elContainer) {
 
 /** Promisified Chrome API methods **/
 function promise_chrome_storage_sync_set(data) {
-	return new Promise((resolve, reject) => {
+	return new Promise((resolve) => {
 		try {
 			chrome.storage.sync.set(data, resolve);
 		} catch (error) {
-			// No need to worry, this happens from time to time when refreshing, etc.
-			console.log("error: ", error);
+			// No need to worry, this happens from time to time when refreshing
+			// In Electron, this could be due to missing Chrome API
+			console.log("chrome.storage.sync.set error:", error);
+			resolve(); // Resolve anyway to prevent errors from propagating
 		}
 	});
 }
@@ -314,7 +340,9 @@ function promise_chrome_storage_sync_get(data) {
 		try {
 			chrome.storage.sync.get(data, resolve);
 		} catch (error) {
-			reject(error);
+			console.log("chrome.storage.sync.get error:", error);
+			// Return empty object to prevent errors in Electron
+			resolve({});
 		}
 	});
 }
