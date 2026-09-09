@@ -4,6 +4,7 @@ const main = {
 	SELECTOR_CREATED_NOTES_GROUP_CONTAINER:
 		".gkA7Yd-sKfxWe.ma6Yeb-r8s4j-gkA7Yd>div",
 	SELECTOR_NOTE_CONTAINER: ".IZ65Hb-n0tgWb",
+	SELECTOR_NOTE_DIALOG: ".VIpgJd-TUo6Hb.XKSfm-L9AdLc",
 	SELECTOR_OPEN_NOTE_CONTAINER: "", // dynamic
 	SELECTOR_OPEN_NOTE: "", // dynamic
 	SELECTOR_OPEN_NOTE_TOOLBAR: "", // dynamic
@@ -24,20 +25,22 @@ const main = {
 	init: async function () {
 		try {
 			main.SELECTOR_OPEN_NOTE_CONTAINER =
-				main.SELECTOR_NOTE_CONTAINER + ".IZ65Hb-QQhtn";
-			main.SELECTOR_OPEN_NOTE =
-				main.SELECTOR_OPEN_NOTE_CONTAINER + " .IZ65Hb-TBnied";
+				main.SELECTOR_NOTE_CONTAINER + ".IZ65Hb-QQhtn, " +
+				main.SELECTOR_NOTE_DIALOG + ".eo9XGd > " + main.SELECTOR_NOTE_CONTAINER;
+			main.SELECTOR_OPEN_NOTE = ".IZ65Hb-TBnied";
 			main.SELECTOR_OPEN_NOTE_TOOLBAR =
-				main.SELECTOR_OPEN_NOTE + " .IZ65Hb-yePe5c";
+				".IZ65Hb-nK2kYb, .IZ65Hb-yePe5c";
 
 			main.elBody = document.querySelector("body");
 
 			main.observerMenu = new MutationObserver(main.maybeInitMenu);
 			main.observerNoteChanges = new MutationObserver(main.checkForOpenNote);
-			main.observerNewNotes = new MutationObserver(main.initNoteObservers);
+			main.observerNewNotes = new MutationObserver(() => {
+				main.initNoteObservers();
+				main.checkForOpenNote();
+			});
 
 			main.checkForDarkMode();
-			main.checkForOpenNote();
 			main.maybeInitMenu();
 
 			try {
@@ -58,19 +61,13 @@ const main = {
 			// Observe existing notes on load for open/close
 			main.initNoteObservers();
 
-			// Observe note group container for added/removed children
-			const elCreatedNotesGroupContainer = document.querySelector(
-				this.SELECTOR_CREATED_NOTES_GROUP_CONTAINER
-			);
-
-			// Listen for list of notes to change - add/remove or page switch
-			if (elCreatedNotesGroupContainer) {
-				main.observerNewNotes.observe(elCreatedNotesGroupContainer, {
-					childList: true,
-				});
-			} else {
-				console.log('Note container not found, observer not attached');
-			}
+			// Keep builds and replaces the editor asynchronously, including on
+			// direct note links. Watch a stable ancestor and scan existing DOM too.
+			main.observerNewNotes.observe(main.elBody, {
+				childList: true,
+				subtree: true,
+			});
+			main.checkForOpenNote();
 
 			// Listen for popstate - triggered by forward and back buttons, and manual hash entry
 			window.addEventListener("popstate", main.checkForOpenNote);
@@ -132,15 +129,16 @@ const main = {
 
 	initNoteObservers: function () {
 		const elNoteContainers = document.querySelectorAll(
-			main.SELECTOR_NOTE_CONTAINER
+			main.SELECTOR_NOTE_CONTAINER + ", " + main.SELECTOR_NOTE_DIALOG
 		);
 		if (elNoteContainers) {
 			elNoteContainers.forEach((elNoteContainer) => {
 				if (!elNoteContainer.classList.contains("gkfs-observed")) {
-					// Only listen for this specific element's attributes to change
-					//  - when they do, check for an open note via same old logic
+					// Keep toggles the dialog's open state independently of the
+					// note's editing state, especially for direct note links.
 					main.observerNoteChanges.observe(elNoteContainer, {
 						attributes: true,
+						attributeFilter: ["class"],
 					});
 
 					elNoteContainer.classList.add("gkfs-observed");
@@ -165,31 +163,36 @@ const main = {
 	},
 
 	checkForOpenNote: function () {
-		const elNote = document.querySelector(main.SELECTOR_OPEN_NOTE);
+		const elContainer = document.querySelector(main.SELECTOR_OPEN_NOTE_CONTAINER);
+		const elNote = elContainer && elContainer.querySelector(main.SELECTOR_OPEN_NOTE);
+		if (main.elContainer && (main.elContainer !== elContainer || !elNote)) {
+			main.elContainer.classList.remove("gkfs-open-note");
+		}
+		main.elContainer = elNote ? elContainer : null;
 		if (elNote) {
 			main.elBody.classList.add("gkfs-has-open-note");
 
-			main.elContainer = document.querySelector(
-				main.SELECTOR_OPEN_NOTE_CONTAINER
-			);
-
-			// Initialize container if needed
-			if (!main.elContainer.classList.contains("gkfs-initialized")) {
-				main.elContainer.classList.add("gkfs-initialized");
-
-				if (main.fullscreen) {
-					main.elBody.classList.add("gkfs-fullscreen");
-				}
+			// QQhtn marks editing, not every open dialog. Direct-link startup
+			// lacks it, so use our own marker for all fullscreen CSS rules.
+			if (!elContainer.classList.contains("gkfs-open-note")) {
+				elContainer.classList.add("gkfs-open-note");
 			}
 
-			if (elNote.hasOwnProperty("gkfs") && elNote.gkfs) {
+			if (elNote.gkfs && typeof elNote.gkfs.toggle_fullscreen === "function") {
 				main.note = elNote.gkfs;
-				main.note.toggle_fullscreen(main.fullscreen);
 			} else {
-				main.note = new Note(elNote, main.elContainer);
+				// The editor can arrive before its toolbar. Retry on later DOM
+				// changes without leaving a partially initialized note behind.
+				const toolbar = elNote.querySelector(main.SELECTOR_OPEN_NOTE_TOOLBAR);
+				const more = toolbar && toolbar.querySelector(
+					".Q0hgme-LgbsSe.Q0hgme-Bz112c-LgbsSe.xl07Ob.INgbqf-LgbsSe.VIpgJd-LgbsSe"
+				);
+				main.note = more ? new Note(elNote, main.elContainer) : null;
 			}
+			main.elBody.classList.toggle("gkfs-fullscreen", main.fullscreen);
 		} else {
 			main.elBody.classList.remove("gkfs-has-open-note");
+			main.note = null;
 		}
 	},
 
@@ -254,9 +257,6 @@ const main = {
 
 /* Note Object */
 const Note = function (el, elContainer) {
-	// Mark element init in progress
-	el.gkfs = 1;
-
 	const inst = this;
 	const elToolbar = el.querySelector(main.SELECTOR_OPEN_NOTE_TOOLBAR);
 	const elBtnMore = elToolbar.querySelector(
@@ -347,6 +347,9 @@ function promise_chrome_storage_sync_get(data) {
 	});
 }
 
-window.addEventListener("load", () => {
+// document_idle injection may happen after the page's load event.
+if (document.readyState === "complete") {
 	main.init();
-});
+} else {
+	window.addEventListener("load", () => main.init(), { once: true });
+}
